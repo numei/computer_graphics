@@ -1,0 +1,13 @@
+# Blender 4.5.3 LTS MTL File: 'wall_v2.blend'
+# www.blender.org
+
+newmtl Clay.002
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 2
+map_Kd /Users/mumei/Desktop/computer_graphic_finalwork/blender/textures/clay04_diffuse.jpg
+map_Ks /Users/mumei/Desktop/computer_graphic_finalwork/blender/textures/clay04_specular.jpg
+map_Bump -bm 1.000000 /Users/mumei/Desktop/computer_graphic_finalwork/blender/textures/clay04_normal_opengl.jpg
