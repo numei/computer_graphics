@@ -272,7 +272,12 @@ int main()
         {
             // 方案A：用鼠标 yaw/pitch 得到的 cameraFront 来定义第三人称的绕猫视角
             // 目标：相机位于玩家后上方，方向与当前视角一致，距离固定，可平滑跟随
-            glm::vec3 viewDir = glm::normalize(cameraFront); // direction from camera toward target
+            // 注意：仅使用水平分量来决定跟随距离，避免相机因为 pitch 过大被拉到地下或飞太高
+            glm::vec3 viewDir = glm::normalize(glm::vec3(cameraFront.x, 0.0f, cameraFront.z));
+            if (glm::length(viewDir) < 1e-4f)
+            {
+                viewDir = glm::vec3(0.0f, 0.0f, -1.0f);
+            }
 
             // 基础参数可按手感微调
             const float followDistance = 12.0f;   // 相机到玩家的水平距离
@@ -303,8 +308,20 @@ int main()
             game.Render(shader3D.ID, cameraPos);
 
             glBindVertexArray(0);
+
+            // 在游戏中绘制 HUD（血条 & 体力条），以及计时器
+            ui.RenderHUD(winW, winH, shaderText.ID,
+                         game.playerHealth, game.playerMaxHealth,
+                         game.player.stamina,
+                         game.score,
+                         game.hitEffectTimer);
+
+            survivalTime += dt;
+            char buf[64];
+            snprintf(buf, sizeof(buf), "Time: %.2f s", survivalTime);
+            ui.text.RenderText(buf, -0.98f, 0.9f, 0.8f, glm::vec3(0.95f), winW, winH, shaderText.ID);
         }
-        // draw UI overlays
+        // draw UI overlays（菜单 / 结束界面）
         if (state != State::PLAYING)
         {
             survivalTime = 0.0f;
@@ -324,15 +341,6 @@ int main()
                 ui.text.RenderText("GAME OVER", -0.25f, 0.4f, 1.6f, glm::vec3(0.95f), winW, winH, shaderText.ID);
             }
         }
-        else
-        {
-            survivalTime += dt;
-            // HUD timer
-            char buf[64];
-            snprintf(buf, sizeof(buf), "Time: %.2f s", survivalTime);
-            ui.text.RenderText(buf, -0.98f, 0.9f, 0.8f, glm::vec3(0.95f), winW, winH, shaderText.ID);
-        }
-
         glfwSwapBuffers(win);
     }
     audio.Shutdown();

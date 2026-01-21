@@ -231,14 +231,24 @@ void Game::InitShadowMap()
 void Game::Reset()
 {
     falling.clear();
+    collectibles.clear();
     spawnTimer = 0.0f;
+    collectSpawnTimer = 2.0f; // first collectible spawn delay
+    score = 0;
 
     // Player stands at 0.5 height
     player.groundY = 0.5f;
     player.pos = glm::vec3(0.0f, player.groundY, 0.0f);
+    player.verticalVel = 0.0f;
+    player.isGrounded = true;
+    player.jumpCooldown = 0.0f;
+    player.stamina = 1.0f;
 
     player.color = glm::vec3(1.0f, 0.8f, 0.1f);
     playerDead = false;
+    playerMaxHealth = 3;
+    playerHealth = playerMaxHealth;
+    hitEffectTimer = 0.0f;
 
     // after loading floorModel and setting floorModel.modelScale
     float desiredFloorTop = -0.5f; // 你希望地面顶面的 world Y
@@ -258,6 +268,11 @@ static float randf(std::mt19937 &rng, float a, float b)
 {
     std::uniform_real_distribution<float> d(a, b);
     return d(rng);
+}
+
+static glm::vec3 RandomColor(std::mt19937 &rng)
+{
+    return glm::vec3(randf(rng, 0.2f, 1.0f), randf(rng, 0.2f, 1.0f), randf(rng, 0.2f, 1.0f));
 }
 
 void Game::SpawnObject()
@@ -290,10 +305,33 @@ void Game::SpawnObject()
 
     falling.push_back(f);
 }
+
+static Collectible MakeCollectible(std::mt19937 &rng, float floorTop)
+{
+    Collectible c;
+    const float floorHalf = 12.0f * 0.5f; // same as player clamp
+    c.pos.x = randf(rng, -floorHalf + 0.5f, floorHalf - 0.5f);
+    c.pos.z = randf(rng, -floorHalf + 0.5f, floorHalf - 0.5f);
+    // 立方体高度 0.4，放在地面上方
+    float cubeHalf = 0.2f;
+    c.pos.y = floorTop + cubeHalf;
+    c.color = RandomColor(rng);
+    c.lifetime = randf(rng, 6.0f, 10.0f); // 生存时间 6-10 秒
+    c.alive = true;
+    return c;
+}
 void Game::Update(float dt, const bool keys[1024], const glm::vec3 &cameraFront, const glm::vec3 &cameraUp)
 {
     if (playerDead)
         return;
+
+    // 受击红光计时衰减
+    if (hitEffectTimer > 0.0f)
+    {
+        hitEffectTimer -= dt;
+        if (hitEffectTimer < 0.0f)
+            hitEffectTimer = 0.0f;
+    }
 
     const float floorTop = -0.5f;
     player.Update(dt, keys, cameraFront, cameraUp);
@@ -307,8 +345,22 @@ void Game::Update(float dt, const bool keys[1024], const glm::vec3 &cameraFront,
     player.pos.x = glm::clamp(player.pos.x, -floorHalf + playerHalf, floorHalf - playerHalf);
     player.pos.z = glm::clamp(player.pos.z, -floorHalf + playerHalf, floorHalf - playerHalf);
 
-    // Force Y to stay fixed (horizontal movement only)
-    player.pos.y = player.groundY;
+    // === 玩家竖直方向物理（重力 + 跳跃 + 落地检测） ===
+    const float gravity = -9.8f * 2.0f; // 略加强一点重力手感
+    if (!player.isGrounded)
+    {
+        player.verticalVel += gravity * dt;
+        player.pos.y += player.verticalVel * dt;
+    }
+
+    // 与地面（groundY）接触的简单判定：脚落到或穿过地面就“落地”
+    float footY = player.pos.y;
+    if (footY <= player.groundY)
+    {
+        player.pos.y = player.groundY;
+        player.verticalVel = 0.0f;
+        player.isGrounded = true;
+    }
 
     // ---------- Spawn and falling updates ----------
     spawnTimer -= dt;
@@ -318,10 +370,45 @@ void Game::Update(float dt, const bool keys[1024], const glm::vec3 &cameraFront,
         SpawnObject();
     }
 
+    // ---------- Collectibles spawn/update ----------
+    collectSpawnTimer -= dt;
+    if (collectSpawnTimer <= 0.0f)
+    {
+        collectSpawnTimer = randf(rng, 3.0f, 6.0f); // 间隔 3-6 秒生成一个
+        collectibles.push_back(MakeCollectible(rng, floorTop));
+    }
+
+    const float pickupRadius = 0.6f;
+    for (auto &c : collectibles)
+    {
+        if (!c.alive)
+            continue;
+        c.lifetime -= dt;
+        if (c.lifetime <= 0.0f)
+        {
+            c.alive = false;
+            continue;
+        }
+        // 拾取判定只看 XZ 平面距离（方块在地面上，玩家 Y 高度不同，用 3D 距离会导致永远碰不到）
+        glm::vec2 dXZ(c.pos.x - player.pos.x, c.pos.z - player.pos.z);
+        float distXZ = glm::length(dXZ);
+        if (distXZ <= pickupRadius)
+        {
+            c.alive = false;
+            score += 10;
+        }
+    }
+    collectibles.erase(std::remove_if(collectibles.begin(), collectibles.end(),
+                                      [](const Collectible &c)
+                                      { return !c.alive; }),
+                       collectibles.end());
+
     // 更新玩家 modelMatrix（把猫脚底对齐地面）
     {
         float scaleY = playerModel.modelScale.y; // uniform or per-axis
-        float modelWorldY = floorTop - playerModel.bboxMin.y * scaleY;
+        // 保持脚底贴地的同时，叠加玩家跳跃产生的竖直位移
+        float yOffset = player.pos.y - player.groundY; // 跳跃时相对于站立高度的增量
+        float modelWorldY = floorTop - playerModel.bboxMin.y * scaleY + yOffset;
         glm::vec3 modelPosWorld(player.pos.x, modelWorldY, player.pos.z);
         // 让猫朝向当前视角方向（仅投影到水平面）
         glm::vec3 dirXZ(cameraFront.x, 0.0f, cameraFront.z);
@@ -395,8 +482,21 @@ void Game::Update(float dt, const bool keys[1024], const glm::vec3 &cameraFront,
             // narrowphase SAT test (OBB vs OBB)
             if (OBBIntersectSAT(playerOBB, objOBB))
             {
-                playerDead = true;
-                std::cout << "[Collide] player hit by falling object\n";
+                // 玩家受到一次伤害：扣除 1 点生命值
+                if (playerHealth > 0)
+                    playerHealth -= 1;
+
+                std::cout << "[Collide] player hit by falling object, health = " << playerHealth << "\n";
+
+                // 触发受击特效
+                hitEffectTimer = 0.6f;
+
+                if (playerHealth <= 0)
+                {
+                    playerDead = true;
+                }
+
+                // 该落物失效
                 o.alive = false;
                 break;
             }
@@ -591,6 +691,35 @@ void Game::Render(unsigned int shader3D, const glm::vec3 &cameraPos)
 
         glActiveTexture(GL_TEXTURE0);
         fallingModels[o.modelIndex].Draw(shader3D);
+    }
+
+    /* ---- collectibles (colored cubes) ---- */
+    if (cubeVAO)
+    {
+        // 使用常量法线，避免缺失顶点法线导致错误 lighting
+        glDisableVertexAttribArray(1); // normal attribute
+        glVertexAttrib3f(1, 0.0f, 1.0f, 0.0f);
+        glDisableVertexAttribArray(2); // uv attribute, if any
+
+        glUniform1i(glGetUniformLocation(shader3D, "uHasDiffuse"), 0);
+        glUniform1i(glGetUniformLocation(shader3D, "uUseAlphaTest"), 0);
+
+        glBindVertexArray(cubeVAO);
+        for (auto &c : collectibles)
+        {
+            glm::mat4 m(1.0f);
+            m = glm::translate(m, c.pos);
+            m = glm::scale(m, glm::vec3(0.4f)); // 小立方体边长约 0.4
+            setModelAndNormal(m);
+
+            // 用 uMatDiffuse 传颜色
+            glUniform3fv(glGetUniformLocation(shader3D, "uMatDiffuse"), 1, &c.color[0]);
+
+            glDrawArrays(GL_TRIANGLES, 0, 36);
+        }
+        glBindVertexArray(0);
+
+        // 下帧渲染其他模型会重新启用属性
     }
 
     glBindTexture(GL_TEXTURE_2D, 0);
