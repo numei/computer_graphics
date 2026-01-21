@@ -1,4 +1,5 @@
 #include "Game.h"
+#include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glad/glad.h>
 #include <cstdlib>
@@ -195,10 +196,10 @@ bool Game::LoadResources(const std::string &assetsDir)
     // compute needed base translate and store somewhere or apply in Render.
     // We'll simply store floorTop for collision calculations:
     floorTop = desiredTopY;
+    // LoadCatParts(assetsDir);
 
     return ok;
 }
-
 void Game::InitShadowMap()
 {
     // ===== Shadow map framebuffer =====
@@ -566,9 +567,18 @@ void Game::Update(float dt, const bool keys[1024], const glm::vec3 &cameraFront,
                                  [](const Falling &f)
                                  { return !f.alive; }),
                   falling.end());
+
+    // 判断是否在移动（水平移动）
+    glm::vec2 delta(player.pos.x - player.prevPos.x,
+                    player.pos.z - player.prevPos.z);
+
+    player.isMoving = (glm::length(delta) > 0.001f);
+
+    // 保存上一帧位置
+    player.prevPos = player.pos;
 }
 
-void Game::Render(unsigned int shader3D, const glm::vec3 &cameraPos)
+void Game::Render(unsigned int shader3D, float dt, const glm::vec3 &cameraPos)
 {
     /* =========================================================
        1. 计算太阳光矩阵（Directional Light）
@@ -627,6 +637,8 @@ void Game::Render(unsigned int shader3D, const glm::vec3 &cameraPos)
         {
             glm::mat4 m = player.modelMatrix;
             setShadowModel(m);
+            playerModel.animEnable = player.isMoving;
+            playerModel.DrawAnimated(m, dt, shadowShader);
             playerModel.DrawDepth();
         }
 
@@ -704,14 +716,22 @@ void Game::Render(unsigned int shader3D, const glm::vec3 &cameraPos)
     /* ---- player ---- */
     {
         setModelAndNormal(player.modelMatrix);
-
+        float horizSpeed = glm::length(glm::vec2(player.pos.x, player.pos.z)); // world units/s
+        float maxSpeed = 3.0f;                                                 // tune to match your control speed
+        float speedFactor = glm::clamp(horizSpeed / maxSpeed, 0.0f, 1.0f);
+        glm::vec3 playerScale = glm::vec3(1.0f); // tune as needed, maybe playerModel.modelScale
         glUniform1i(glGetUniformLocation(shader3D, "uHasDiffuse"), 1);
         glUniform1i(glGetUniformLocation(shader3D, "uUseAlphaTest"), 1);
         glUniform1f(glGetUniformLocation(shader3D, "uAlphaCutoff"), 0.3f);
         glUniform1i(glGetUniformLocation(shader3D, "uDiffuseMap"), 0);
-
+        // 告诉模型当前是否在移动
+        playerModel.animEnable = player.isMoving;
+        glUseProgram(shader3D);
         glActiveTexture(GL_TEXTURE0);
-        playerModel.Draw(shader3D);
+
+        // set uViewPos if used
+        // glUniform3fv(glGetUniformLocation(shader3D.ID, "uViewPos"), 1, &cameraPos[0]);
+        playerModel.DrawAnimated(player.modelMatrix, dt, shader3D);
     }
 
     /* ---- falling objects ---- */

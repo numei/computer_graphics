@@ -8,6 +8,18 @@
 #include "StaticModel.h"
 #include "Shader.h"
 
+enum CatPart
+{
+    CAT_BODY = 0,
+    CAT_HEAD = 1,
+    CAT_TAIL = 2,
+    CAT_LEG0 = 3,
+    CAT_LEG1 = 4,
+    CAT_LEG2 = 5,
+    CAT_LEG3 = 6,
+    CAT_PART_COUNT = 7
+};
+
 struct Falling
 {
     glm::vec3 pos;
@@ -28,6 +40,12 @@ class Game
 public:
     Player player;
     std::vector<Falling> falling;
+
+    // cat part prototypes (loaded once)
+    StaticModel catParts[CAT_PART_COUNT];
+    glm::vec3 catPartLocalOffset[CAT_PART_COUNT]; // in body-local coordinates
+    glm::vec3 catPartScale[CAT_PART_COUNT];
+
     StaticModel fallingPrototype; // e.g. crate model
     StaticModel floorModel;       // detailed floor model
     StaticModel fallingModels[3]; // optional multiple falling models
@@ -50,10 +68,16 @@ public:
     void InitShadowMap();
     void Reset();
     void Update(float dt, const bool keys[1024], const glm::vec3 &cameraFront, const glm::vec3 &cameraUp);
-    void Render(unsigned int shader3D, const glm::vec3 &cameraPos);
+    void Render(unsigned int shader3D, float dt, const glm::vec3 &cameraPos);
     void SetCubeVAO(unsigned int vao) { cubeVAO = vao; }
 
     StaticModel playerModel;
+
+    void LoadCatParts(const std::string &assetDir);
+
+    // Draw function using models
+    void DrawAnimatedCatWithModels(const glm::vec3 &pos, float speedFactor,
+                                   unsigned int shader3D, unsigned int cubeVAO /*optional*/);
 
     void LoadPlayerModel(const std::string &path)
     {
@@ -67,6 +91,7 @@ public:
             // 可选：设置默认缩放来匹配原来 cube 大小
             playerModel.modelScale = glm::vec3(0.6f);
         }
+        // std::cout << "scene->mNumMeshes: " << this->scene->mNumMeshes << ", scene->mRootNode->mNumChildren: " << this->scene->mRootNode->mNumChildren << std::endl;
     }
 
     bool LoadResources(const std::string &assetsDir);

@@ -1,9 +1,14 @@
 // src/StaticModel.cpp
 #include "StaticModel.h"
+#include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 #include <iostream>
+#include <limits>
+#include <string>
 #include <cstring>
 // stb_image single-file loader
 #define STB_IMAGE_IMPLEMENTATION
@@ -14,6 +19,67 @@ static glm::vec2 aiVec2ToGlm(const aiVector3D &v) { return glm::vec2(v.x, v.y); 
 
 StaticModel::StaticModel() {}
 StaticModel::~StaticModel() { Cleanup(); }
+
+// compute axis-aligned bbox of all meshes attached to node in node-local coordinates
+void StaticModel::ComputeMeshAABBForNode(const aiNode *node, glm::vec3 &outMin, glm::vec3 &outMax) const
+{
+    // initialize
+    outMin = glm::vec3(std::numeric_limits<float>::infinity());
+    outMax = glm::vec3(-std::numeric_limits<float>::infinity());
+
+    if (!scene)
+        return;
+
+    for (unsigned int mi = 0; mi < node->mNumMeshes; ++mi)
+    {
+        aiMesh *mesh = scene->mMeshes[node->mMeshes[mi]];
+        if (!mesh || mesh->mNumVertices == 0)
+            continue;
+        for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
+        {
+            aiVector3D av = mesh->mVertices[v];
+            glm::vec3 p(av.x, av.y, av.z); // mesh vertices are already in mesh-local / node-local space after Assimp import
+            outMin = glm::min(outMin, p);
+            outMax = glm::max(outMax, p);
+        }
+    }
+    // If node had no meshes, outMin/outMax will be +/-inf
+}
+
+// Walk scene nodes and compute pivots for nodes that have geometry.
+void StaticModel::ComputeNodePivots()
+{
+    if (!scene)
+        return;
+
+    // recursive lambda
+    std::function<void(const aiNode *)> recur = [&](const aiNode *nd)
+    {
+        glm::vec3 mn, mx;
+        // initialize to inf so ComputeMeshAABBForNode will change them if meshes exist
+        mn = glm::vec3(std::numeric_limits<float>::infinity());
+        mx = glm::vec3(-std::numeric_limits<float>::infinity());
+
+        // Compute bbox for this node's meshes (if any)
+        ComputeMeshAABBForNode(nd, mn, mx);
+
+        if (mn.x <= mx.x) // valid bbox
+        {
+            // choose pivot: use top edge (max.y) and center x/z to rotate legs around top of mesh
+            glm::vec3 localCenter = (mn + mx) * 0.5f;
+            glm::vec3 pivot = glm::vec3(localCenter.x, mx.y, localCenter.z);
+            std::string nm(nd->mName.C_Str());
+            nodePivots[nm] = pivot;
+            // debug:
+            // std::cout << "Pivot for node '"<<nm<<"' = ("<<pivot.x<<","<<pivot.y<<","<<pivot.z<<")\n";
+        }
+        // recurse children
+        for (unsigned int i = 0; i < nd->mNumChildren; ++i)
+            recur(nd->mChildren[i]);
+    };
+
+    recur(scene->mRootNode);
+}
 
 void StaticModel::Cleanup()
 {
@@ -71,16 +137,13 @@ bool StaticModel::LoadFromFile(const std::string &path)
 {
     Cleanup();
 
-    Assimp::Importer importer;
-    const aiScene *scene = importer.ReadFile(path,
-                                             aiProcess_Triangulate |
-                                                 aiProcess_GenSmoothNormals |
-                                                 aiProcess_FlipUVs |
-                                                 aiProcess_CalcTangentSpace |
-                                                 aiProcess_JoinIdenticalVertices |
-                                                 aiProcess_OptimizeMeshes |
-                                                 aiProcess_PreTransformVertices // bake node transforms into vertices -> simpler
-    );
+    scene = importer.ReadFile(path,
+                              aiProcess_Triangulate |
+                                  aiProcess_GenSmoothNormals |
+                                  aiProcess_FlipUVs |
+                                  aiProcess_CalcTangentSpace |
+                                  aiProcess_JoinIdenticalVertices |
+                                  aiProcess_OptimizeMeshes);
 
     if (!scene || !scene->HasMeshes())
     {
@@ -335,6 +398,10 @@ bool StaticModel::LoadFromFile(const std::string &path)
             }
         }
     }
+    // After assimp import:
+    // this->scene = scene; // however you store it
+    nodePivots.clear();
+    ComputeNodePivots();
 
     bboxInitialized = false;
     ComputeBBoxRecursive(scene->mRootNode, scene, glm::mat4(1.0f));
@@ -475,4 +542,213 @@ void StaticModel::DrawDepth() const
         glDrawElements(GL_TRIANGLES, m.indexCount, GL_UNSIGNED_INT, 0);
     }
     glBindVertexArray(0);
+}
+
+// ---- Helper: adapt these to your MeshRenderData definition ----
+// I will assume you have a member std::vector<MeshRenderData> meshes;
+// and MeshRenderData contains at least: unsigned int VAO; unsigned int indexCount; unsigned int VBO (maybe);
+// possibly unsigned int EBO; unsigned int diffuseTex; glm::vec3 diffuseColor; bool hasDiffuseTex;
+// If your field names differ, change below accordingly.
+
+void StaticModel::DrawMeshByIndex(unsigned int meshIndex, unsigned int shaderID) const
+{
+    if (!scene)
+        return; // or handle accordingly
+    if (meshIndex >= meshes.size())
+    {
+        std::cerr << "DrawMeshByIndex: invalid meshIndex " << meshIndex << std::endl;
+        return;
+    }
+
+    const auto &m = meshes[meshIndex];
+
+    // --- set material/texture uniforms (if present) ---
+    GLint locHasDiffuse = glGetUniformLocation(shaderID, "uHasDiffuse");
+    GLint locDiffuseMap = glGetUniformLocation(shaderID, "uDiffuseMap");
+    GLint locMatDiffuse = glGetUniformLocation(shaderID, "uMatDiffuse");
+
+    // Example field names — update to your actual struct:
+    // m.diffuseTex   -> GLuint texture id (0 if none)
+    // m.hasDiffuseTex -> bool
+    // m.diffuseColor -> glm::vec3
+
+    bool hasTex = false;
+    GLuint texId = 0;
+    glm::vec3 matColor(1.0f, 1.0f, 1.0f);
+
+// Try to read common field names (adapt if your names differ)
+// ======= ADAPT HERE if your struct fields are different =======
+// Example assumptions:
+// m.diffuseTex (GLuint), m.hasDiffuse (bool), m.diffuseColor (glm::vec3)
+#ifdef HAS_MESH_FIELDS_EXPLICIT // remove this define in real code; it's explanatory
+    hasTex = m.hasDiffuse;
+    texId = m.diffuseTex;
+    matColor = m.diffuseColor;
+#else
+// Try common variants with safe checks using sizeof/offsetof is overkill here;
+// you should replace these lines with the actual fields from your MeshRenderData:
+// e.g. hasTex = (m.diffuseTextureID != 0);
+//      texId = m.diffuseTextureID;
+//      matColor = m.baseColor;
+#endif
+    // --- end adapt section ---
+
+    // If your mesh struct actually contains a texture id field named `texture_diffuse`:
+    // uncomment/modify the below to match:
+    // hasTex = (m.texture_diffuse != 0);
+    // texId  = m.texture_diffuse;
+
+    if (locHasDiffuse >= 0)
+        glUniform1i(locHasDiffuse, hasTex ? 1 : 0);
+    if (locMatDiffuse >= 0)
+        glUniform3f(locMatDiffuse, matColor.r, matColor.g, matColor.b);
+    if (hasTex && locDiffuseMap >= 0)
+    {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texId);
+        glUniform1i(locDiffuseMap, 0);
+    }
+    else if (locDiffuseMap >= 0)
+    {
+        // ensure shader doesn't sample stale texture unit
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glUniform1i(locDiffuseMap, 0);
+    }
+
+    // --- bind VAO and draw ---
+    // Common struct fields: m.VAO, m.indexCount, m.hasIndices (or m.EBO)
+    glBindVertexArray(m.vao);
+
+    if (m.indexCount > 0)
+    {
+        // indexed draw: assume indices are uint
+        glDrawElements(GL_TRIANGLES, (GLsizei)m.indexCount, GL_UNSIGNED_INT, 0);
+    }
+    else
+    {
+        // fallback: draw arrays using vertex count (if stored as vertexCount)
+        // if (m.vertexCount > 0)
+        //     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)m.vertexCount);
+        // else
+        //     std::cerr << "DrawMeshByIndex: mesh " << meshIndex << " has no indices or vertexCount\n";
+    }
+
+    // unbind VAO and texture (optional hygiene)
+    glBindVertexArray(0);
+    if (hasTex)
+    {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+}
+
+void StaticModel::DrawNodeAnimated(const aiNode *nd, const glm::mat4 &parentTransform, unsigned int shaderID)
+{
+    // std::cout << "Drawing node " << nd << std::endl;
+    // compute node transform
+    glm::mat4 nodeTransform = parentTransform * aiMatToGlm(nd->mTransformation);
+
+    // check node name for animation targets
+    std::string nm(nd->mName.C_Str());
+
+    glm::mat4 animatedTransform = nodeTransform; // default
+
+    // set up animation for legs and tail: frequency, amplitude, phase
+    float t = (float)glfwGetTime();
+    float legFreq = 5.5f;
+    float legAmp = glm::radians(13.0f);
+
+    // simple name matching (case-sensitive). If your node names differ, adjust strings.
+    if (nm.find("Leg") != std::string::npos || nm.find("leg") != std::string::npos)
+    {
+        // std::cout << "animEnable: " << (animEnable ? "true" : "false") << std::endl;
+        if (!animEnable)
+        {
+            animatedTransform = nodeTransform; // 原样绘制，不动画
+        }
+        else
+        {
+            // determine phase by which leg
+            float phase = 0.0f;
+            if (nm.find("Front_L") != std::string::npos || nm.find("FrontLeft") != std::string::npos || nm.find("Front_L") != std::string::npos)
+                phase = 0.0f;
+            else if (nm.find("Front_R") != std::string::npos || nm.find("FrontRight") != std::string::npos)
+                phase = glm::pi<float>();
+            else if (nm.find("Back_L") != std::string::npos || nm.find("BackLeft") != std::string::npos)
+                phase = glm::pi<float>();
+            else if (nm.find("Back_R") != std::string::npos || nm.find("BackRight") != std::string::npos)
+                phase = 0.0f;
+
+            float rawAngle = sinf(t * legFreq + phase) * legAmp;
+            float angle = rawAngle * animBlend;
+            // pivot in local node coordinates (if available), otherwise use origin (0,0,0)
+            glm::vec3 pivot(0.0f);
+            auto it = nodePivots.find(nm);
+            if (it != nodePivots.end())
+                pivot = it->second;
+            // glm::vec3 size = bboxMax - bboxMin;
+            // glm::vec3 pivot = bboxMin;
+            // pivot.y = bboxMax.y;
+
+            // rotate around local X axis (forward/back swing). If your leg's local axis differs, change axis.
+            glm::mat4 T1 = glm::translate(glm::mat4(1.0f), pivot);
+            glm::mat4 R = glm::rotate(glm::mat4(1.0f), angle, glm::vec3(1, 0, 0));
+            glm::mat4 T2 = glm::translate(glm::mat4(1.0f), -pivot);
+
+            // apply locally: nodeTransform is in model-space; we must insert local rotation
+            animatedTransform = nodeTransform * T1 * R * T2;
+        }
+    }
+    else if (nm == "Body")
+    {
+        float bob = 0.0f;
+        if (animBlend > 0.001f)
+            bob = sinf(t * legFreq * 0.5f) * 0.01f * animBlend; // 1cm 级别
+
+        animatedTransform = glm::translate(nodeTransform, glm::vec3(0, bob, 0));
+    }
+
+    // Draw meshes attached to this node using animatedTransform as model
+    // set uniform uModel/uNormalMat as in your normal draw path
+    GLint locModel = glGetUniformLocation(shaderID, "uModel");
+    if (locModel >= 0)
+        glUniformMatrix4fv(locModel, 1, GL_FALSE, &animatedTransform[0][0]);
+
+    GLint locNormal = glGetUniformLocation(shaderID, "uNormalMat");
+    if (locNormal >= 0)
+    {
+        glm::mat3 normalMat = glm::transpose(glm::inverse(glm::mat3(animatedTransform)));
+        glUniformMatrix3fv(locNormal, 1, GL_FALSE, &normalMat[0][0]);
+    }
+
+    // draw each mesh of this node
+    for (unsigned int i = 0; i < nd->mNumMeshes; ++i)
+    {
+        unsigned int meshIndex = nd->mMeshes[i];
+        // your existing mesh draw routine; e.g.:
+        // meshes[meshIndex].Draw(shaderID);
+        DrawMeshByIndex(meshIndex, shaderID); // replace with your actual function
+    }
+
+    // recurse children with nodeTransform (or animatedTransform if you want children to follow)
+    for (unsigned int c = 0; c < nd->mNumChildren; ++c)
+    {
+        DrawNodeAnimated(nd->mChildren[c], animatedTransform, shaderID);
+        // Note: we pass nodeTransform to children if you don't want child's transform to be affected
+        // by the local animation; if you DO want children to follow, pass animatedTransform instead.
+    }
+}
+// 新接口：接收外部 modelMatrix
+void StaticModel::DrawAnimated(const glm::mat4 &rootModel, float deltaTime, unsigned int shaderID)
+{
+    // 平滑逼近目标状态
+    float target = animEnable ? 1.0f : 0.0f;
+    float speed = 6.0f; // 越大，切换越快
+
+    animBlend += (target - animBlend) * speed * deltaTime;
+    animBlend = glm::clamp(animBlend, 0.0f, 1.0f);
+    if (!scene)
+        return;
+    DrawNodeAnimated(scene->mRootNode, rootModel, shaderID);
 }

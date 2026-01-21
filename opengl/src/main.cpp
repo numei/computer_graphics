@@ -149,7 +149,7 @@ int main()
     game.Reset();
     game.InitShadowMap();
     // Load walk_cat.obj model file
-    std::string modelPath = base + "/assets/models/walk_cat.obj";
+    std::string modelPath = base + "/assets/models/cat_for_opengl.obj";
     game.LoadPlayerModel(modelPath.c_str());
     game.playerModel.modelScale = glm::vec3(0.5f);
     std::vector<float> data;
@@ -275,8 +275,8 @@ int main()
             glm::vec3 viewDir = glm::normalize(cameraFront); // direction from camera toward target
 
             // 基础参数可按手感微调
-            const float followDistance = 12.0f;   // 相机到玩家的水平距离
-            const float heightOffset = 2.5f;      // 相机自身的抬高
+            const float followDistance = 12.0f;             // 相机到玩家的水平距离
+            const float heightOffset = 2.5f;                // 相机自身的抬高
             const glm::vec3 targetOffset(0.0f, 0.8f, 0.0f); // 让视线瞄准玩家上方一点
 
             // 以“玩家位置 - 视线方向 * 距离”为基准，再加上垂直抬高
@@ -300,7 +300,7 @@ int main()
             shader3D.setMat4("uProj", proj);
 
             // now render the game (Game::Render should bind VAO and use shader uniforms)
-            game.Render(shader3D.ID, cameraPos);
+            game.Render(shader3D.ID, dt, cameraPos);
 
             glBindVertexArray(0);
         }

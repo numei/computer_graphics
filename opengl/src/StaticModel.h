@@ -5,6 +5,8 @@
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <assimp/scene.h>
+#include <assimp/Importer.hpp>
+#include <unordered_map>
 
 struct SimpleVertex
 {
@@ -39,6 +41,8 @@ public:
     // Load model via Assimp (.obj/.fbx/.gltf/.glb)
     bool LoadFromFile(const std::string &path);
 
+    void DrawAnimated(const glm::mat4 &rootModel, float deltaTime, unsigned int shaderID);
+
     // Draw with currently bound shader. Caller must set uModel, uNormalMat, and shader must
     // support uHasDiffuse, uHasAlpha, uUseAlphaTest, uAlphaCutoff, uMatDiffuse, and sampler2D uDiffuseMap.
     void Draw(GLuint shaderProgram) const;
@@ -50,8 +54,27 @@ public:
     glm::vec3 bboxMin = glm::vec3(0.0f);
     glm::vec3 bboxMax = glm::vec3(0.0f);
     bool bboxInitialized = false;
+    bool isMoving = false;
+    bool animEnable = false; // whether to animate legs
+    float animBlend = 0.0f;
 
 private:
+    // store computed local-space pivot for nodes by name (local coordinates of the model file)
+    std::unordered_map<std::string, glm::vec3> nodePivots;
+
+    // compute pivots after scene loaded
+    void ComputeNodePivots();
+
+    // recursive draw used by DrawAnimated
+    void DrawNodeAnimated(const aiNode *node, const glm::mat4 &parentTransform, unsigned int shaderID);
+
+    // helper: compute mesh bbox in node local space (returns min/max)
+    void ComputeMeshAABBForNode(const aiNode *node, glm::vec3 &outMin, glm::vec3 &outMax) const;
+
+    Assimp::Importer importer;
+    // pointer to loaded Assimp scene (assume you already have it)
+    const aiScene *scene = nullptr;
+
     std::vector<MeshRenderData> meshes;
     std::string directory;
 
@@ -62,4 +85,6 @@ private:
     void ComputeBBoxRecursive(aiNode *node,
                               const aiScene *scene,
                               const glm::mat4 &parentTransform);
+    // Draw single mesh by index (used by DrawNodeAnimated)
+    void DrawMeshByIndex(unsigned int meshIndex, unsigned int shaderID) const;
 };
