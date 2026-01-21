@@ -1,41 +1,65 @@
-# Prerequisites
-*.d
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
 
-# Compiled Object files
-*.slo
-*.lo
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# Build directories
+build/
+out/
+bin/
+obj/
+Debug/
+Release/
+x64/
+x86/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# Compiled files
 *.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
+*.exe
+*.dll
 *.so
 *.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
 *.a
 *.lib
+!opengl/lib/*.lib
+!opengl/lib/*.dll
+!opengl/lib/*.dylib
+!opengl/lib/*.a
 
-# Executables
-*.exe
-*.out
-*.app
+# IDE files
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
 
-# debug information files
-*.dwo
+# Temporary files
+*.tmp
+*.log
+*.cache
+*.blender1
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
