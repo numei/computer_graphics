@@ -9,7 +9,7 @@
 
 // File-scope: store the player's fixed Y height so we can force horizontal-only motion
 static float s_playerFixedY = 0.5f;
-
+static const float floorHalf = 12.0f * 0.5f; // = 6.0f
 // put near top of Game.cpp or in Collision.h
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -164,8 +164,7 @@ bool Game::LoadResources(const std::string &assetsDir)
     FallingObjectConfig fallingModelsConfig[3] = {
         {assetsDir + "/models/bucket.obj", glm::vec3(0.2f)},
         {assetsDir + "/models/jar.obj", glm::vec3(0.2f)},
-        {assetsDir + "/models/teapot.obj", glm::vec3(1.0f)}
-    };
+        {assetsDir + "/models/teapot.obj", glm::vec3(1.0f)}};
     bool ok = true;
     for (int i = 0; i < 3; ++i)
     {
@@ -260,45 +259,179 @@ static float randf(std::mt19937 &rng, float a, float b)
     return d(rng);
 }
 
+// Replace your existing SpawnObject() with this robust version.
+// Requires: fallingModels[i].bboxMin/bboxMax and floorModel.bboxMin/bboxMax and floorModel.modelMatrix be valid.
+// If floorModel is not available or bbox invalid, it falls back to center 12x12 floor.
+
 void Game::SpawnObject()
 {
     Falling f;
-    f.pos.x = randf(rng, -4.0f, 4.0f);
-    f.pos.y = randf(rng, 4.0f, 7.0f);
-    f.pos.z = randf(rng, -4.0f, 4.0f);
 
-    float horizontalSpeed = randf(rng, -1.0f, 1.0f);
-    float horizontalSpeedZ = randf(rng, -0.5f, 0.5f);
-    float downwardSpeed = randf(rng, 0.5f, 1.0f);
-    f.vel = glm::vec3(horizontalSpeed, -downwardSpeed, horizontalSpeedZ);
+    // --------- 1) compute floor world bounds (min/max on X,Z) robustly by transforming bbox corners ----------
+    float floorMinX, floorMaxX, floorMinZ, floorMaxZ;
+    bool haveFloor = false;
 
-    f.rot = randf(rng, 0.0f, 6.2831853f);
-    glm::vec3 ax(randf(rng, -1.0f, 1.0f), randf(rng, -1.0f, 1.0f), randf(rng, -1.0f, 1.0f));
-    if (glm::length(ax) < 0.001f)
-        ax = glm::vec3(0.0f, 1.0f, 0.0f);
-    f.rotAxis = glm::normalize(ax);
-    f.rotSpeed = randf(rng, 1.0f, 2.0f);
+    if (floorModel.bboxMax != floorModel.bboxMin) // basic validity
+    {
+        // produce 8 corners in local space
+        glm::vec3 corners[8];
+        glm::vec3 bmin = floorModel.bboxMin;
+        glm::vec3 bmax = floorModel.bboxMax;
+        int idx = 0;
+        for (int xi = 0; xi <= 1; ++xi)
+            for (int yi = 0; yi <= 1; ++yi)
+                for (int zi = 0; zi <= 1; ++zi)
+                {
+                    corners[idx++] = glm::vec3(
+                        xi ? bmax.x : bmin.x,
+                        yi ? bmax.y : bmin.y,
+                        zi ? bmax.z : bmin.z);
+                }
+
+        // transform all corners by floorModel.modelMatrix to world and take min/max X/Z
+        bool first = true;
+        for (int i = 0; i < 8; ++i)
+        {
+            glm::vec4 wc = floorModel.modelMatrix * glm::vec4(corners[i], 1.0f);
+            if (first)
+            {
+                floorMinX = floorMaxX = wc.x;
+                floorMinZ = floorMaxZ = wc.z;
+                first = false;
+            }
+            else
+            {
+                floorMinX = std::min(floorMinX, wc.x);
+                floorMaxX = std::max(floorMaxX, wc.x);
+                floorMinZ = std::min(floorMinZ, wc.z);
+                floorMaxZ = std::max(floorMaxZ, wc.z);
+            }
+        }
+        haveFloor = true;
+    }
+
+    if (!haveFloor)
+    {
+        const float floorHalf = 12.0f * 0.5f;
+        floorMinX = -floorHalf;
+        floorMaxX = floorHalf;
+        floorMinZ = -floorHalf;
+        floorMaxZ = floorHalf;
+    }
+
+    // optional debug
+    // std::cout << "[Spawn] floorX=[" << floorMinX << "," << floorMaxX << "] floorZ=[" << floorMinZ << "," << floorMaxZ << "]\n";
+
+    // --------- 2) pick prototype index first so we can compute its horizontal footprint ----------
+    f.modelIndex = rng() % 3;
+    f.modelScale = fallingModels[f.modelIndex].modelScale;
+
+    // get prototype bbox local corners
+    glm::vec3 pmin = fallingModels[f.modelIndex].bboxMin;
+    glm::vec3 pmax = fallingModels[f.modelIndex].bboxMax;
+
+    glm::vec3 protoCorners[8];
+    int pidx = 0;
+    for (int xi = 0; xi <= 1; ++xi)
+        for (int yi = 0; yi <= 1; ++yi)
+            for (int zi = 0; zi <= 1; ++zi)
+            {
+                protoCorners[pidx++] = glm::vec3(
+                    xi ? pmax.x : pmin.x,
+                    yi ? pmax.y : pmin.y,
+                    zi ? pmax.z : pmin.z);
+            }
+
+    // transform prototype corners by scale (no translation) to find horizontal footprint extents
+    float maxAbsX = 0.0f, maxAbsZ = 0.0f;
+    for (int i = 0; i < 8; ++i)
+    {
+        glm::vec3 scaled = protoCorners[i] * f.modelScale; // component-wise
+        maxAbsX = std::max(maxAbsX, fabs(scaled.x));
+        maxAbsZ = std::max(maxAbsZ, fabs(scaled.z));
+    }
+
+    // half-extents on X/Z that the prototype may occupy when centered at origin
+    float halfX = maxAbsX;
+    float halfZ = maxAbsZ;
+    const float safety = 0.01f; // small margin
+    halfX += safety;
+    halfZ += safety;
+
+    // optional debug
+    // std::cout << "[Spawn] protoIdx=" << f.modelIndex << " halfX=" << halfX << " halfZ=" << halfZ << "\n";
+
+    // --------- 3) compute safe spawn ranges so that entire footprint lies inside floor bounds ----------
+    float spawnMinX = floorMinX + halfX;
+    float spawnMaxX = floorMaxX - halfX;
+    float spawnMinZ = floorMinZ + halfZ;
+    float spawnMaxZ = floorMaxZ - halfZ;
+
+    // if ranges are invalid, shrink to center area (fallback)
+    if (spawnMaxX <= spawnMinX)
+    {
+        float cx = 0.5f * (floorMinX + floorMaxX);
+        spawnMinX = cx - 0.5f;
+        spawnMaxX = cx + 0.5f;
+    }
+    if (spawnMaxZ <= spawnMinZ)
+    {
+        float cz = 0.5f * (floorMinZ + floorMaxZ);
+        spawnMinZ = cz - 0.5f;
+        spawnMaxZ = cz + 0.5f;
+    }
+
+    // optional debug - print once to verify ranges (uncomment if needed)
+    // std::cout << "[Spawn] spawnX=[" << spawnMinX << "," << spawnMaxX << "] spawnZ=[" << spawnMinZ << "," << spawnMaxZ << "]\n";
+
+    // --------- 4) choose spawn center and vertical position and initial velocity (no horizontal) ----------
+    f.pos.x = randf(rng, spawnMinX, spawnMaxX);
+    f.pos.z = randf(rng, spawnMinZ, spawnMaxZ);
+    f.pos.y = randf(rng, 5.0f, 8.0f);
+
+    // vertical-only initial velocity
+    float initialDown = randf(rng, 0.6f, 1.6f);
+    f.vel = glm::vec3(0.0f, -initialDown, 0.0f);
+
+    // no dynamic rotation while falling
+    f.rot = 0.0f;
+    f.rotAxis = glm::vec3(0.0f, 1.0f, 0.0f);
+    f.rotSpeed = 0.0f;
+
     f.alive = true;
 
-    f.modelIndex = rng() % 3; // pick which model to use
-    // compute instance AABB half extents in model-space then in world
-    f.modelScale = fallingModels[f.modelIndex].modelScale;
-    f.halfExtents = 0.5f * (fallingModels[f.modelIndex].bboxMax - fallingModels[f.modelIndex].bboxMin);
+    // store halfExtents for AABB quick test (consistent with computed halfX/halfZ)
+    f.halfExtents = glm::vec3(halfX, (pmax.y - pmin.y) * 0.5f * f.modelScale.y + safety, halfZ);
 
-    // optional color multiplier (for tinting)
-    f.color = glm::vec3(randf(rng, 0.6f, 1.0f), randf(rng, 0.1f, 0.6f), randf(rng, 0.1f, 0.9f));
+    // initial modelMatrix so it is visible on first frame
+    {
+        glm::mat4 m(1.0f);
+        m = glm::translate(m, f.pos);
+        m = glm::scale(m, f.modelScale);
+        f.modelMatrix = m;
+    }
 
     falling.push_back(f);
+
+    // debug: uncomment these lines to inspect values at runtime
+    // std::cout << "[SpawnObject] model=" << f.modelIndex
+    //           << " pos=("<<f.pos.x<<","<<f.pos.y<<","<<f.pos.z<<")"
+    //           << " floorX=["<<floorMinX<<","<<floorMaxX<<"] floorZ=["<<floorMinZ<<","<<floorMaxZ<<"]"
+    //           << " halfX="<<halfX<<" halfZ="<<halfZ
+    //           << std::endl;
 }
+
 void Game::Update(float dt, const bool keys[1024], const glm::vec3 &cameraFront, const glm::vec3 &cameraUp)
 {
     if (playerDead)
         return;
 
+    static float difficulty = 1.0f;
+    difficulty += dt * 0.02f; // 每秒略微变难
+    difficulty = glm::clamp(difficulty, 1.0f, 2.5f);
+
     const float floorTop = -0.5f;
     player.Update(dt, keys, cameraFront, cameraUp);
-
-    const float floorHalf = 12.0f * 0.5f; // = 6.0f
 
     // Player radius (0.6 scaled cube)
     const float playerHalf = 0.3f;
@@ -356,16 +489,16 @@ void Game::Update(float dt, const bool keys[1024], const glm::vec3 &cameraFront,
             continue;
 
         // 1) physics integrate
-        o.vel += glm::vec3(0.0f, -9.8f * dt * 0.2f, 0.0f);
-        o.pos += o.vel * dt;
-        if (fabs(o.rotSpeed) > 1e-6f)
-            o.rot += o.rotSpeed * dt;
+        o.vel.y += -9.8f * dt * 0.2f * difficulty;
+        o.pos.y += o.vel.y * dt;
+
+        o.vel.x = 0.0f;
+        o.vel.z = 0.0f;
 
         // 2) immediately update modelMatrix from current pos/rot/scale
         {
             glm::mat4 mm(1.0f);
             mm = glm::translate(mm, o.pos);
-            mm = glm::rotate(mm, o.rot, o.rotAxis);
             mm = glm::scale(mm, o.modelScale);
             o.modelMatrix = mm;
         }
@@ -409,8 +542,9 @@ void Game::Update(float dt, const bool keys[1024], const glm::vec3 &cameraFront,
             o.modelMatrix = mm;
 
             o.vel = glm::vec3(0.0f);
+
             // optionally zero angular motion
-            // o.rotSpeed = 0.0f; o.angVel = glm::vec3(0.0f);
+            o.rotSpeed = 0.0f;
 
             o.alive = false; // or set state = LANDED if you want to keep it visible
             continue;
