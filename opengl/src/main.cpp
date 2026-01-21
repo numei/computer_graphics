@@ -270,16 +270,25 @@ int main()
         }
         else
         {
-            glm::vec3 offset = glm::vec3(0.0f, 4.0f, 14.0f);
+            // 方案A：用鼠标 yaw/pitch 得到的 cameraFront 来定义第三人称的绕猫视角
+            // 目标：相机位于玩家后上方，方向与当前视角一致，距离固定，可平滑跟随
+            glm::vec3 viewDir = glm::normalize(cameraFront); // direction from camera toward target
 
-            // smooth follow (lerp)
-            glm::vec3 desiredPos = game.player.pos + offset;
+            // 基础参数可按手感微调
+            const float followDistance = 12.0f;   // 相机到玩家的水平距离
+            const float heightOffset = 2.5f;      // 相机自身的抬高
+            const glm::vec3 targetOffset(0.0f, 0.8f, 0.0f); // 让视线瞄准玩家上方一点
+
+            // 以“玩家位置 - 视线方向 * 距离”为基准，再加上垂直抬高
+            glm::vec3 desiredPos = game.player.pos - viewDir * followDistance + glm::vec3(0.0f, heightOffset, 0.0f);
+
+            // 平滑跟随：在 desiredPos 与当前 smoothCamPos 之间插值
             float followSpeed = 6.0f;
             float t = glm::clamp(followSpeed * dt, 0.0f, 1.0f);
             smoothCamPos = glm::mix(smoothCamPos, desiredPos, t);
 
-            // look at slightly above player center
-            glm::vec3 camTarget = game.player.pos + glm::vec3(0.0f, 0.6f, 0.0f);
+            // 视线目标：玩家位置稍微抬高
+            glm::vec3 camTarget = game.player.pos + targetOffset;
             cameraPos = smoothCamPos;
             view = glm::lookAt(smoothCamPos, camTarget, glm::vec3(0, 1, 0));
         }

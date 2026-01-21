@@ -1,6 +1,11 @@
 #include "Audio.h"
-#include <OpenAL/al.h>
-#include <OpenAL/alc.h>
+#ifdef __APPLE__
+    #include <OpenAL/al.h>
+    #include <OpenAL/alc.h>
+#else
+    #include <AL/al.h>
+    #include <AL/alc.h>
+#endif
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h" // put dr_wav.h into src/
 #include <iostream>

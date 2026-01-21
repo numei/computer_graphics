@@ -456,7 +456,16 @@ void Game::Update(float dt, const bool keys[1024], const glm::vec3 &cameraFront,
         float scaleY = playerModel.modelScale.y; // uniform or per-axis
         float modelWorldY = floorTop - playerModel.bboxMin.y * scaleY;
         glm::vec3 modelPosWorld(player.pos.x, modelWorldY, player.pos.z);
-        float rotRad = glm::radians(180.0f);
+        // 让猫朝向当前视角方向（仅投影到水平面）
+        glm::vec3 dirXZ(cameraFront.x, 0.0f, cameraFront.z);
+        float len = glm::length(dirXZ);
+        if (len < 1e-4f)
+            dirXZ = glm::vec3(0.0f, 0.0f, -1.0f); // fallback
+        else
+            dirXZ /= len;
+
+        // yaw 绕 Y 轴：atan2(x, z)；当 dirXZ = (0,0,-1) 时得到 pi，与之前固定的 180 度一致
+        float rotRad = atan2(dirXZ.x, dirXZ.z);
         player.modelMatrix = MakeModelMatrix(modelPosWorld, glm::vec3(0, 1, 0), rotRad, playerModel.modelScale);
     }
 
