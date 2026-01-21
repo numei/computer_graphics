@@ -20,6 +20,14 @@ enum CatPart
     CAT_PART_COUNT = 7
 };
 
+struct Collectible
+{
+    glm::vec3 pos;
+    glm::vec3 color;
+    float lifetime; // seconds remaining
+    bool alive;
+};
+
 struct Falling
 {
     glm::vec3 pos;
@@ -49,10 +57,22 @@ public:
     StaticModel fallingPrototype; // e.g. crate model
     StaticModel floorModel;       // detailed floor model
     StaticModel fallingModels[3]; // optional multiple falling models
-    float floorTop = -0.5f;       // 可在 LoadResources 后用 floorModel bbox 覆盖
+    std::vector<Collectible> collectibles;
+    float floorTop = -0.5f; // 可在 LoadResources 后用 floorModel bbox 覆盖
     float floorYOffset;
     float spawnTimer;
     bool playerDead;
+
+    // 玩家生命值：最多 3 次受击
+    int playerMaxHealth = 3;
+    int playerHealth = 3;
+    int score = 0;
+
+    // 受击红光特效计时
+    float hitEffectTimer = 0.0f;
+
+    // 收集物生成控制
+    float collectSpawnTimer = 0.0f;
 
     std::mt19937 rng;
     // ===== Shadow mapping =====

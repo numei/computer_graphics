@@ -2,14 +2,16 @@
 #include <iostream>
 #include <glad/glad.h>
 #include <glm/ext/matrix_clip_space.hpp>
+#include <algorithm>
 
 UI::UI()
 {
     // NDC positions (center x/y + width/height)
     mainButtons.push_back({0.0f, 0.2f, 0.6f, 0.12f, "Start Game", false});
     mainButtons.push_back({0.0f, -0.05f, 0.6f, 0.12f, "Quit", false});
-    gameoverButtons.push_back({0.0f, 0.2f, 0.6f, 0.12f, "Restart", false});
-    gameoverButtons.push_back({0.0f, -0.05f, 0.6f, 0.12f, "Quit", false});
+    // GameOver 按钮：横向分布，放在下方
+    gameoverButtons.push_back({-0.3f, -0.7f, 0.4f, 0.12f, "Restart", false});  // 左侧
+    gameoverButtons.push_back({0.3f, -0.7f, 0.4f, 0.12f, "Quit", false});      // 右侧
 }
 
 void UI::Init(const char *fontpath, int fontPx)
@@ -81,39 +83,43 @@ void UI::UpdateMouse(float mouseNDCx, float mouseNDCy, bool mouseDown, int winW,
     }
 }
 
-void UI::Render(int winW, int winH, unsigned int textShader, bool gameover)
+// 内部工具：画一个屏幕空间矩形（NDC）并填充颜色
+static void DrawRectNDC(TextRenderer &text, unsigned int textShader,
+                        float cx, float cy, float w, float h, glm::vec3 color)
 {
     glDisable(GL_DEPTH_TEST);
 
-    auto DrawRect = [&](float cx, float cy, float w, float h, glm::vec3 color)
-    {
-        float x0 = cx - w * 0.5f, x1 = cx + w * 0.5f;
-        float y0 = cy - h * 0.5f, y1 = cy + h * 0.5f;
+    float x0 = cx - w * 0.5f, x1 = cx + w * 0.5f;
+    float y0 = cy - h * 0.5f, y1 = cy + h * 0.5f;
 
-        float verts[6 * 4]{
-            x0, y0, 0, 0,
-            x1, y0, 1, 0,
-            x1, y1, 1, 1,
+    float verts[6 * 4]{
+        x0, y0, 0, 0,
+        x1, y0, 1, 0,
+        x1, y1, 1, 1,
 
-            x0, y0, 0, 0,
-            x1, y1, 1, 1,
-            x0, y1, 0, 1};
+        x0, y0, 0, 0,
+        x1, y1, 1, 1,
+        x0, y1, 0, 1};
 
-        glUseProgram(textShader);
-        glm::mat4 ortho = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f);
-        glUniformMatrix4fv(glGetUniformLocation(textShader, "uOrtho"), 1, GL_FALSE, &ortho[0][0]);
-        glUniform3f(glGetUniformLocation(textShader, "uColor"), color.r, color.g, color.b);
+    glUseProgram(textShader);
+    glm::mat4 ortho = glm::ortho(-1.0f, 1.0f, -1.0f, 1.0f);
+    glUniformMatrix4fv(glGetUniformLocation(textShader, "uOrtho"), 1, GL_FALSE, &ortho[0][0]);
+    glUniform3f(glGetUniformLocation(textShader, "uColor"), color.r, color.g, color.b);
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, text.atlas.tex);
-        glUniform1i(glGetUniformLocation(textShader, "uTex"), 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, text.atlas.tex);
+    glUniform1i(glGetUniformLocation(textShader, "uTex"), 0);
 
-        glBindVertexArray(text.vao);
-        glBindBuffer(GL_ARRAY_BUFFER, text.vbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_DYNAMIC_DRAW);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-        glBindVertexArray(0);
-    };
+    glBindVertexArray(text.vao);
+    glBindBuffer(GL_ARRAY_BUFFER, text.vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_DYNAMIC_DRAW);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glBindVertexArray(0);
+}
+
+void UI::Render(int winW, int winH, unsigned int textShader, bool gameover)
+{
+    glDisable(GL_DEPTH_TEST);
 
     if (!gameover)
     {
@@ -121,7 +127,7 @@ void UI::Render(int winW, int winH, unsigned int textShader, bool gameover)
         for (auto &b : mainButtons)
         {
             glm::vec3 base = b.hovered ? glm::vec3(0.9f, 0.7f, 0.4f) : glm::vec3(0.7f, 0.6f, 0.5f);
-            DrawRect(b.cx, b.cy, b.w, b.h, base);
+            DrawRectNDC(text, textShader, b.cx, b.cy, b.w, b.h, base);
             text.RenderText(b.label, b.cx - 0.22f, b.cy - 0.03f, 1.0f, glm::vec3(0.08f), winW, winH, textShader);
         }
     }
@@ -130,9 +136,149 @@ void UI::Render(int winW, int winH, unsigned int textShader, bool gameover)
         for (auto &b : gameoverButtons)
         {
             glm::vec3 base = b.hovered ? glm::vec3(0.9f, 0.7f, 0.4f) : glm::vec3(0.7f, 0.6f, 0.5f);
-            DrawRect(b.cx, b.cy, b.w, b.h, base);
+            DrawRectNDC(text, textShader, b.cx, b.cy, b.w, b.h, base);
             text.RenderText(b.label, b.cx - 0.22f, b.cy - 0.03f, 1.0f, glm::vec3(0.08f), winW, winH, textShader);
         }
+    }
+
+    glEnable(GL_DEPTH_TEST);
+}
+
+void UI::RenderHUD(int winW, int winH, unsigned int textShader,
+                   int playerHealth, int playerMaxHealth,
+                   float stamina,
+                   int score,
+                   float hitEffectTimer)
+{
+    glDisable(GL_DEPTH_TEST);
+
+    // 血条（左上角）
+    float hpRatio = 0.0f;
+    if (playerMaxHealth > 0)
+        hpRatio = glm::clamp(static_cast<float>(playerHealth) / static_cast<float>(playerMaxHealth), 0.0f, 1.0f);
+
+    // 外框
+    DrawRectNDC(text, textShader, -0.75f, 0.9f, 0.4f, 0.05f, glm::vec3(0.15f, 0.05f, 0.05f));
+    // 填充（按比例缩放宽度）
+    float hpInnerW = 0.4f * hpRatio;
+    float hpInnerCx = -0.75f - 0.2f + hpInnerW * 0.5f; // 左对齐
+    DrawRectNDC(text, textShader, hpInnerCx, 0.9f, hpInnerW, 0.035f, glm::vec3(0.8f, 0.1f, 0.1f));
+
+    // 体力条（血条下方）
+    float stRatio = glm::clamp(stamina, 0.0f, 1.0f);
+    DrawRectNDC(text, textShader, -0.75f, 0.82f, 0.4f, 0.04f, glm::vec3(0.08f, 0.12f, 0.15f));
+    float stInnerW = 0.4f * stRatio;
+    float stInnerCx = -0.75f - 0.2f + stInnerW * 0.5f;
+    DrawRectNDC(text, textShader, stInnerCx, 0.82f, stInnerW, 0.03f, glm::vec3(0.2f, 0.7f, 0.3f));
+
+    // 分数显示（右上角）
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Score: %d", score);
+        text.RenderText(buf, 0.45f, 0.9f, 0.8f, glm::vec3(0.95f), winW, winH, textShader);
+    }
+
+    // 受击红光：只做屏幕边缘轻微渐变，不遮挡中心
+    if (hitEffectTimer > 0.0f)
+    {
+        float t = glm::clamp(hitEffectTimer / 0.6f, 0.0f, 1.0f);
+        glm::vec3 baseColor(0.9f, 0.1f, 0.1f);
+
+        // 用多层边框近似“渐变”
+        const int layers = 6;
+        const float maxThickness = 0.18f; // 占比不要太大
+        const float step = maxThickness / layers;
+
+        for (int i = 0; i < layers; ++i)
+        {
+            float inset = i * step;
+            float a = t * (1.0f - float(i) / layers) * 0.35f; // 控制强度，避免太夸张
+            glm::vec3 color = baseColor * a;
+
+            float w = 2.0f - 2.0f * inset;
+            float h = step;
+
+            // top
+            DrawRectNDC(text, textShader, 0.0f, 1.0f - inset - h * 0.5f, w, h, color);
+            // bottom
+            DrawRectNDC(text, textShader, 0.0f, -1.0f + inset + h * 0.5f, w, h, color);
+            // left
+            DrawRectNDC(text, textShader, -1.0f + inset + h * 0.5f, 0.0f, h, w, color);
+            // right
+            DrawRectNDC(text, textShader, 1.0f - inset - h * 0.5f, 0.0f, h, w, color);
+        }
+    }
+
+    glEnable(GL_DEPTH_TEST);
+}
+
+void UI::RenderGameOver(int winW, int winH, unsigned int textShader,
+                       int currentScore,
+                       const std::vector<int> &leaderboard)
+{
+    glDisable(GL_DEPTH_TEST);
+
+    // 显示 "GAME OVER" 标题
+    text.RenderText("GAME OVER", -0.25f, 0.5f, 1.6f, glm::vec3(0.95f), winW, winH, textShader);
+
+    // 显示当前分数
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Your Score: %d", currentScore);
+        text.RenderText(buf, -0.35f, 0.35f, 1.0f, glm::vec3(0.9f, 0.9f, 0.3f), winW, winH, textShader);
+    }
+
+    // ===== 排行榜表格 =====
+    // 表格背景框：扩大尺寸以容纳10行数据
+    float tableX = 0.0f;
+    float tableY = -0.15f;  // 向下移动，给上方标题留空间
+    float tableW = 0.75f;    // 稍微加宽
+    float tableH = 0.75f;   // 高度从0.5增加到0.75，确保能放下10行
+    DrawRectNDC(text, textShader, tableX, tableY, tableW, tableH, glm::vec3(0.15f, 0.12f, 0.1f));
+
+    // 表头："排名 | 分数" - 确保在背景框内
+    float headerY = tableY + tableH * 0.5f - 0.08f;  // 背景框顶部向下0.08的位置
+    text.RenderText("Rank", -0.28f, headerY, 0.8f, glm::vec3(0.95f, 0.85f, 0.3f), winW, winH, textShader);
+    text.RenderText("Score", 0.18f, headerY, 0.8f, glm::vec3(0.95f, 0.85f, 0.3f), winW, winH, textShader);
+    
+    // 显示排行榜数据（最多10条）
+    // 计算起始位置：表头下方，确保10行都在背景框内
+    float startY = headerY - 0.1f;  // 表头下方0.1开始
+    float lineHeight = 0.065f;       // 行距，确保10行不重叠
+    int displayCount = std::min(10, static_cast<int>(leaderboard.size()));
+
+    for (int i = 0; i < displayCount; ++i)
+    {
+        float yPos = startY - i * lineHeight;
+        
+        // 排名列（左对齐）
+        char rankBuf[16];
+        snprintf(rankBuf, sizeof(rankBuf), "%d", i + 1);
+        text.RenderText(rankBuf, -0.28f, yPos, 0.65f, glm::vec3(0.85f), winW, winH, textShader);
+        
+        // 分数列（右对齐）
+        char scoreBuf[16];
+        snprintf(scoreBuf, sizeof(scoreBuf), "%d", leaderboard[i]);
+        
+        // 如果是当前分数，高亮显示
+        glm::vec3 color = (leaderboard[i] == currentScore) ? glm::vec3(0.9f, 0.9f, 0.3f) : glm::vec3(0.85f);
+        text.RenderText(scoreBuf, 0.18f, yPos, 0.65f, color, winW, winH, textShader);
+    }
+
+    // 如果排行榜为空，显示提示
+    if (leaderboard.empty())
+    {
+        text.RenderText("No scores yet!", -0.2f, 0.0f, 0.75f, glm::vec3(0.7f), winW, winH, textShader);
+    }
+
+    // 绘制按钮（Restart 和 Quit）- 横向分布，放在下方
+    for (auto &b : gameoverButtons)
+    {
+        glm::vec3 base = b.hovered ? glm::vec3(0.9f, 0.7f, 0.4f) : glm::vec3(0.7f, 0.6f, 0.5f);
+        DrawRectNDC(text, textShader, b.cx, b.cy, b.w, b.h, base);
+        // 按钮文字居中
+        float textOffset = (b.label == "Restart") ? -0.15f : -0.1f;
+        text.RenderText(b.label, b.cx + textOffset, b.cy - 0.03f, 1.0f, glm::vec3(0.08f), winW, winH, textShader);
     }
 
     glEnable(GL_DEPTH_TEST);
