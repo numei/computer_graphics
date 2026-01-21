@@ -31,5 +31,10 @@ public:
                    float stamina,
                    int score,
                    float hitEffectTimer);
+
+    // 渲染 GameOver 界面：显示排行榜和当前分数
+    void RenderGameOver(int winW, int winH, unsigned int textShader,
+                       int currentScore,
+                       const std::vector<int> &leaderboard);
 };
 #endif

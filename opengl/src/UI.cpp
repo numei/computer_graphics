@@ -2,14 +2,16 @@
 #include <iostream>
 #include <glad/glad.h>
 #include <glm/ext/matrix_clip_space.hpp>
+#include <algorithm>
 
 UI::UI()
 {
     // NDC positions (center x/y + width/height)
     mainButtons.push_back({0.0f, 0.2f, 0.6f, 0.12f, "Start Game", false});
     mainButtons.push_back({0.0f, -0.05f, 0.6f, 0.12f, "Quit", false});
-    gameoverButtons.push_back({0.0f, 0.2f, 0.6f, 0.12f, "Restart", false});
-    gameoverButtons.push_back({0.0f, -0.05f, 0.6f, 0.12f, "Quit", false});
+    // GameOver 按钮：横向分布，放在下方
+    gameoverButtons.push_back({-0.3f, -0.7f, 0.4f, 0.12f, "Restart", false});  // 左侧
+    gameoverButtons.push_back({0.3f, -0.7f, 0.4f, 0.12f, "Quit", false});      // 右侧
 }
 
 void UI::Init(const char *fontpath, int fontPx)
@@ -205,6 +207,78 @@ void UI::RenderHUD(int winW, int winH, unsigned int textShader,
             // right
             DrawRectNDC(text, textShader, 1.0f - inset - h * 0.5f, 0.0f, h, w, color);
         }
+    }
+
+    glEnable(GL_DEPTH_TEST);
+}
+
+void UI::RenderGameOver(int winW, int winH, unsigned int textShader,
+                       int currentScore,
+                       const std::vector<int> &leaderboard)
+{
+    glDisable(GL_DEPTH_TEST);
+
+    // 显示 "GAME OVER" 标题
+    text.RenderText("GAME OVER", -0.25f, 0.5f, 1.6f, glm::vec3(0.95f), winW, winH, textShader);
+
+    // 显示当前分数
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Your Score: %d", currentScore);
+        text.RenderText(buf, -0.35f, 0.35f, 1.0f, glm::vec3(0.9f, 0.9f, 0.3f), winW, winH, textShader);
+    }
+
+    // ===== 排行榜表格 =====
+    // 表格背景框：扩大尺寸以容纳10行数据
+    float tableX = 0.0f;
+    float tableY = -0.15f;  // 向下移动，给上方标题留空间
+    float tableW = 0.75f;    // 稍微加宽
+    float tableH = 0.75f;   // 高度从0.5增加到0.75，确保能放下10行
+    DrawRectNDC(text, textShader, tableX, tableY, tableW, tableH, glm::vec3(0.15f, 0.12f, 0.1f));
+
+    // 表头："排名 | 分数" - 确保在背景框内
+    float headerY = tableY + tableH * 0.5f - 0.08f;  // 背景框顶部向下0.08的位置
+    text.RenderText("Rank", -0.28f, headerY, 0.8f, glm::vec3(0.95f, 0.85f, 0.3f), winW, winH, textShader);
+    text.RenderText("Score", 0.18f, headerY, 0.8f, glm::vec3(0.95f, 0.85f, 0.3f), winW, winH, textShader);
+    
+    // 显示排行榜数据（最多10条）
+    // 计算起始位置：表头下方，确保10行都在背景框内
+    float startY = headerY - 0.1f;  // 表头下方0.1开始
+    float lineHeight = 0.065f;       // 行距，确保10行不重叠
+    int displayCount = std::min(10, static_cast<int>(leaderboard.size()));
+
+    for (int i = 0; i < displayCount; ++i)
+    {
+        float yPos = startY - i * lineHeight;
+        
+        // 排名列（左对齐）
+        char rankBuf[16];
+        snprintf(rankBuf, sizeof(rankBuf), "%d", i + 1);
+        text.RenderText(rankBuf, -0.28f, yPos, 0.65f, glm::vec3(0.85f), winW, winH, textShader);
+        
+        // 分数列（右对齐）
+        char scoreBuf[16];
+        snprintf(scoreBuf, sizeof(scoreBuf), "%d", leaderboard[i]);
+        
+        // 如果是当前分数，高亮显示
+        glm::vec3 color = (leaderboard[i] == currentScore) ? glm::vec3(0.9f, 0.9f, 0.3f) : glm::vec3(0.85f);
+        text.RenderText(scoreBuf, 0.18f, yPos, 0.65f, color, winW, winH, textShader);
+    }
+
+    // 如果排行榜为空，显示提示
+    if (leaderboard.empty())
+    {
+        text.RenderText("No scores yet!", -0.2f, 0.0f, 0.75f, glm::vec3(0.7f), winW, winH, textShader);
+    }
+
+    // 绘制按钮（Restart 和 Quit）- 横向分布，放在下方
+    for (auto &b : gameoverButtons)
+    {
+        glm::vec3 base = b.hovered ? glm::vec3(0.9f, 0.7f, 0.4f) : glm::vec3(0.7f, 0.6f, 0.5f);
+        DrawRectNDC(text, textShader, b.cx, b.cy, b.w, b.h, base);
+        // 按钮文字居中
+        float textOffset = (b.label == "Restart") ? -0.15f : -0.1f;
+        text.RenderText(b.label, b.cx + textOffset, b.cy - 0.03f, 1.0f, glm::vec3(0.08f), winW, winH, textShader);
     }
 
     glEnable(GL_DEPTH_TEST);

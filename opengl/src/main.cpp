@@ -24,6 +24,9 @@
 #include "UI.h"
 #include "Game.h"
 #include "Audio.h"
+#include <fstream>
+#include <sstream>
+#include <algorithm>
 const int WINW = 1280, WINH = 920;
 bool keys[1024] = {0};
 bool mousePressed = false;
@@ -58,6 +61,11 @@ void cursor_cb(GLFWwindow *w, double xpos, double ypos);
 void mouse_cb(GLFWwindow *w, int button, int action, int mods);
 void firstPersonInit();
 void thirdPersonInit();
+
+// 排行榜相关函数
+std::vector<int> LoadLeaderboard(const std::string &filepath);
+void SaveLeaderboard(const std::string &filepath, const std::vector<int> &scores);
+std::vector<int> AddScoreAndGetTop(const std::string &filepath, int newScore, int topN = 10);
 
 std::string GetExecutableDir()
 {
@@ -251,7 +259,12 @@ int main()
         {
             game.Update(dt, keys, cameraFront, cameraUp);
             if (game.playerDead)
+            {
                 state = State::GAMEOVER;
+                // 游戏结束时保存分数到排行榜
+                std::string leaderboardPath = base + "/leaderboard.txt";
+                AddScoreAndGetTop(leaderboardPath, game.score, 10);
+            }
         }
         int W, H;
         glfwGetFramebufferSize(win, &W, &H);
@@ -325,20 +338,23 @@ int main()
         if (state != State::PLAYING)
         {
             survivalTime = 0.0f;
-            // dim overlay
-            // draw panel using UI::Render that uses text shader
-            // first draw background panels if needed (UI::Render renders buttons)
-            bool gameOver = (state == State::GAMEOVER);
             firstPerson = false;
-            ui.Render(winW, winH, shaderText.ID, gameOver);
             if (state == State::MENU)
             {
-                // title text
+                // 主菜单界面
+                ui.Render(winW, winH, shaderText.ID, false);
                 ui.text.RenderText("CAT DODGE", -0.35f, 0.45f, 1.8f, glm::vec3(0.95f), winW, winH, shaderText.ID);
             }
-            else
+            else if (state == State::GAMEOVER)
             {
-                ui.text.RenderText("GAME OVER", -0.25f, 0.4f, 1.6f, glm::vec3(0.95f), winW, winH, shaderText.ID);
+                // GameOver 界面：显示排行榜和当前分数
+                std::string leaderboardPath = base + "/leaderboard.txt";
+                std::vector<int> leaderboard = LoadLeaderboard(leaderboardPath);
+                // 只取前10名
+                if (leaderboard.size() > 10)
+                    leaderboard.resize(10);
+                
+                ui.RenderGameOver(winW, winH, shaderText.ID, game.score, leaderboard);
             }
         }
         glfwSwapBuffers(win);
@@ -417,4 +433,57 @@ void thirdPersonInit()
 void firstPersonInit()
 {
     aspect = 45.0f;
+}
+
+// 排行榜文件读写实现
+std::vector<int> LoadLeaderboard(const std::string &filepath)
+{
+    std::vector<int> scores;
+    std::ifstream file(filepath);
+    if (file.is_open())
+    {
+        int score;
+        while (file >> score)
+        {
+            scores.push_back(score);
+        }
+        file.close();
+        // 降序排序
+        std::sort(scores.begin(), scores.end(), std::greater<int>());
+    }
+    return scores;
+}
+
+void SaveLeaderboard(const std::string &filepath, const std::vector<int> &scores)
+{
+    std::ofstream file(filepath);
+    if (file.is_open())
+    {
+        for (int score : scores)
+        {
+            file << score << "\n";
+        }
+        file.close();
+    }
+}
+
+std::vector<int> AddScoreAndGetTop(const std::string &filepath, int newScore, int topN)
+{
+    // 加载现有排行榜
+    std::vector<int> scores = LoadLeaderboard(filepath);
+    
+    // 添加新分数
+    scores.push_back(newScore);
+    
+    // 降序排序
+    std::sort(scores.begin(), scores.end(), std::greater<int>());
+    
+    // 保存完整排行榜
+    SaveLeaderboard(filepath, scores);
+    
+    // 返回前 topN 名
+    if (scores.size() > static_cast<size_t>(topN))
+        scores.resize(topN);
+    
+    return scores;
 }
