@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.11.0)
 project(HelloGL VERSION 0.1.0)
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
 
 # Use C++ 17 standard
 set(CMAKE_CXX_STANDARD 17)

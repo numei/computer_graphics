@@ -10,6 +10,7 @@
 #include <limits>
 #include <string>
 #include <cstring>
+#include <functional>
 // stb_image single-file loader
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
